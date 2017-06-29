@@ -442,6 +442,56 @@ class TempLM(db.Model):
         return '<TempLM %r>' % self.id
 
 
+class TempBL(db.Model):
+    """大亚湾临时表1"""
+    __tablename__ = 'temp_bl'
+    __bind_key__ = 'kakou'
+    id = db.Column(db.Integer, primary_key=True)
+    cltx_id = db.Column(db.Integer)
+    hphm = db.Column(db.String(16))
+    jgsj = db.Column(db.DateTime)
+    hpys = db.Column(db.String(16))
+    hpys_id = db.Column(db.Integer)
+    hpys_code = db.Column(db.String(8))
+    kkdd = db.Column(db.String(64))
+    kkdd_id = db.Column(db.String(32))
+    fxbh = db.Column(db.String(16))
+    fxbh_code = db.Column(db.String(8))
+    cdbh = db.Column(db.Integer)
+    clsd = db.Column(db.Integer)
+    hpzl = db.Column(db.String(8))
+    kkbh = db.Column(db.String(64))
+    clbj = db.Column(db.String(8))
+    imgurl = db.Column(db.String(255))
+    flag = db.Column(db.Integer)
+    banned = db.Column(db.Integer)
+
+    def __init__(self, cltx_id, hphm, jgsj, hpys, hpys_id, hpys_code, kkdd,
+		 kkdd_id, fxbh, fxbh_code, cdbh, clsd, hpzl, kkbh, clbj,
+		 imgurl, flag, banned):
+        self.cltx_id = cltx_id
+        self.hphm = hphm
+        self.jgsj = jgsj
+	self.hpys = hpys
+	self.hpys_id = hpys_id
+	self.hpys_code = hpys_code
+	self.kkdd = kkdd
+	self.kkdd_id = kkdd_id
+	self.fxbh = fxbh
+	self.fxbh_code = fxbh_code
+	self.cdbh = cdbh
+	self.clsd = clsd
+	self.hpzl = hpzl
+	self.kkbh = kkbh
+	self.clbj = clbj
+	self.imgurl = imgurl
+	self.flag = flag
+	self.banned = banned
+
+    def __repr__(self):
+        return '<TempBL %r>' % self.id
+
+
 class FinalHCQ(db.Model):
     """大亚湾临时表1"""
     __tablename__ = 'final_hcq'
@@ -740,3 +790,52 @@ class FinalLM(db.Model):
 
     def __repr__(self):
         return '<FinalLM %r>' % self.id
+
+class FinalBL(db.Model):
+    """大亚湾临时表1"""
+    __tablename__ = 'final_bl'
+    __bind_key__ = 'kakou'
+    id = db.Column(db.Integer, primary_key=True)
+    cltx_id = db.Column(db.Integer)
+    hphm = db.Column(db.String(16))
+    jgsj = db.Column(db.DateTime)
+    hpys = db.Column(db.String(16))
+    hpys_id = db.Column(db.Integer)
+    hpys_code = db.Column(db.String(8))
+    kkdd = db.Column(db.String(64))
+    kkdd_id = db.Column(db.String(32))
+    fxbh = db.Column(db.String(16))
+    fxbh_code = db.Column(db.String(8))
+    cdbh = db.Column(db.Integer)
+    clsd = db.Column(db.Integer)
+    hpzl = db.Column(db.String(8))
+    kkbh = db.Column(db.String(64))
+    clbj = db.Column(db.String(8))
+    imgurl = db.Column(db.String(255))
+    imgpath = db.Column(db.String(255))
+    flag = db.Column(db.Integer)
+
+    def __init__(self, cltx_id, hphm, jgsj, hpys, hpys_id, hpys_code, kkdd,
+		 kkdd_id, fxbh, fxbh_code, cdbh, clsd, hpzl, kkbh, clbj,
+		 imgurl, imgpath, flag):
+        self.cltx_id = cltx_id
+        self.hphm = hphm
+        self.jgsj = jgsj
+	self.hpys = hpys
+	self.hpys_id = hpys_id
+	self.hpys_code = hpys_code
+	self.kkdd = kkdd
+	self.kkdd_id = kkdd_id
+	self.fxbh = fxbh
+	self.fxbh_code = fxbh_code
+	self.cdbh = cdbh
+	self.clsd = clsd
+	self.hpzl = hpzl
+	self.kkbh = kkbh
+	self.clbj = clbj
+	self.imgurl = imgurl
+	self.imgpath = imgpath
+	self.flag = flag
+
+    def __repr__(self):
+        return '<FinalBL %r>' % self.id
