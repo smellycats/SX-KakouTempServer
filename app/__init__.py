@@ -1,4 +1,4 @@
-﻿# -*- coding: utf-8 -*-
+# -*- coding: utf-8 -*-
 import logging
 
 import arrow
@@ -38,8 +38,6 @@ limiter.header_mapping = {
 cache = Cache(app, config={'CACHE_TYPE': 'simple'})
 
 from . import views
-
-
 
 
 @app.errorhandler(400)

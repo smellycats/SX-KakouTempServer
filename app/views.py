@@ -272,7 +272,7 @@ def token_post():
 
 
 @app.route('/kakou/hcq1', methods=['POST'])
-@limiter.limit('500/minute')
+@limiter.limit('5000/minute')
 #@limiter.exempt
 #@auth.login_required
 def hcq1_post():
@@ -292,7 +292,7 @@ def hcq1_post():
 
 
 @app.route('/kakou/hcq2', methods=['POST'])
-@limiter.limit('500/minute')
+@limiter.limit('5000/minute')
 #@limiter.exempt
 #@auth.login_required
 def hcq2_post():
@@ -311,7 +311,7 @@ def hcq2_post():
 	logger.error(e)
 
 @app.route('/kakou/hcq3', methods=['POST'])
-@limiter.limit('500/minute')
+@limiter.limit('5000/minute')
 #@limiter.exempt
 #@auth.login_required
 def hcq3_post():
@@ -330,7 +330,7 @@ def hcq3_post():
 	logger.error(e)
 
 @app.route('/kakou/dyw', methods=['POST'])
-@limiter.limit('500/minute')
+@limiter.limit('5000/minute')
 #@limiter.exempt
 #@auth.login_required
 def dyw_post():
@@ -350,7 +350,7 @@ def dyw_post():
 
 
 @app.route('/kakou/hy', methods=['POST'])
-@limiter.limit('500/minute')
+@limiter.limit('5000/minute')
 #@limiter.exempt
 #@auth.login_required
 def hy_post():
@@ -370,7 +370,7 @@ def hy_post():
 
 
 @app.route('/kakou/hd', methods=['POST'])
-@limiter.limit('500/minute')
+@limiter.limit('5000/minute')
 #@limiter.exempt
 #@auth.login_required
 def hd_post():
@@ -390,7 +390,7 @@ def hd_post():
 
 
 @app.route('/kakou/zk', methods=['POST'])
-@limiter.limit('500/minute')
+@limiter.limit('5000/minute')
 #@limiter.exempt
 #@auth.login_required
 def zk_post():
@@ -410,7 +410,7 @@ def zk_post():
 
 
 @app.route('/kakou/lm', methods=['POST'])
-@limiter.limit('500/minute')
+@limiter.limit('5000/minute')
 #@limiter.exempt
 #@auth.login_required
 def lm_post():
@@ -429,8 +429,28 @@ def lm_post():
 	logger.error(e)
 
 
+@app.route('/kakou/bl', methods=['POST'])
+@limiter.limit('5000/minute')
+#@limiter.exempt
+#@auth.login_required
+def bl_post():
+    try:
+        for i in request.json:
+            t = TempBL(cltx_id=i['id'], hphm=i['hphm'], jgsj=i['jgsj'], hpys=i['hpys'],
+                       hpys_id=i['hpys_id'], hpys_code=i['hpys_code'], kkdd=i['kkdd'],
+                       kkdd_id=i['kkdd_id'], fxbh=i['fxbh'], fxbh_code=i['fxbh_code'],
+		       cdbh=i['cdbh'], clsd=i['clsd'], hpzl=i['hpzl'], kkbh='',
+		       clbj=i['clbj'], imgurl=i['imgurl'], flag=0, banned=0)
+            db.session.add(t)
+    	db.session.commit()
+        
+	return jsonify({'total': len(request.json)}), 201
+    except Exception as e:
+	logger.exception(e)
+
+
 @app.route('/maxid/hcq', methods=['GET'])
-@limiter.limit('500/minute')
+@limiter.limit('5000/minute')
 #@limiter.exempt
 #@auth.login_required
 def hcq_maxid_get():
@@ -443,7 +463,7 @@ def hcq_maxid_get():
 	logger.error(e)
 
 @app.route('/maxid/dyw', methods=['GET'])
-@limiter.limit('500/minute')
+@limiter.limit('5000/minute')
 #@limiter.exempt
 #@auth.login_required
 def dyw_maxid_get():
@@ -457,7 +477,7 @@ def dyw_maxid_get():
 
 
 @app.route('/maxid/hy', methods=['GET'])
-@limiter.limit('500/minute')
+@limiter.limit('5000/minute')
 #@limiter.exempt
 #@auth.login_required
 def hy_maxid_get():
@@ -471,7 +491,7 @@ def hy_maxid_get():
 
 
 @app.route('/maxid/hd', methods=['GET'])
-@limiter.limit('500/minute')
+@limiter.limit('5000/minute')
 #@limiter.exempt
 #@auth.login_required
 def hd_maxid_get():
@@ -485,7 +505,7 @@ def hd_maxid_get():
 
 
 @app.route('/maxid/zk', methods=['GET'])
-@limiter.limit('500/minute')
+@limiter.limit('5000/minute')
 #@limiter.exempt
 #@auth.login_required
 def zk_maxid_get():
@@ -499,12 +519,26 @@ def zk_maxid_get():
 
 
 @app.route('/maxid/lm', methods=['GET'])
-@limiter.limit('500/minute')
+@limiter.limit('5000/minute')
 #@limiter.exempt
 #@auth.login_required
 def lm_maxid_get():
     try:
         sql = ("select max(id) from final_lm")
+        q = db.get_engine(app, bind='kakou').execute(sql).fetchone()
+        
+	return jsonify({'maxid': q[0]}), 200
+    except Exception as e:
+	logger.error(e)
+
+
+@app.route('/maxid/bl', methods=['GET'])
+@limiter.limit('5000/minute')
+#@limiter.exempt
+#@auth.login_required
+def bl_maxid_get():
+    try:
+        sql = ("select max(id) from final_bl")
         q = db.get_engine(app, bind='kakou').execute(sql).fetchone()
         
 	return jsonify({'maxid': q[0]}), 200
@@ -519,26 +553,28 @@ def lm_maxid_get():
 def hcq_final_get(start_id, end_id):
     try:
 	items = []
-        c = db.session.query(FinalHCQ).filter(FinalHCQ.id>=start_id, FinalHCQ.id<=end_id).all()
-        for i in c:
+	sql = ("select f.*, l.date_created from final_hcq as f left join log_hcq as l on f.id = l.final_id where f.id >= {0} and f.id <= {1}".format(start_id, end_id))
+        q = db.get_engine(app, bind='kakou').execute(sql).fetchall()
+        for i in q:
 	    item = {}
-	    item['id'] = i.id
-	    item['cltx_id'] = i.cltx_id
-	    item['hphm'] = i.hphm
-	    item['jgsj'] = str(i.jgsj)
-	    item['hpys'] = i.hpys
-	    item['hpys_id'] = i.hpys_id
-	    item['hpys_code'] = i.hpys_code
-	    item['kkdd'] = i.kkdd
-	    item['kkdd_id'] = i.kkdd_id
-	    item['fxbh'] = i.fxbh
-	    item['fxbh_code'] = i.fxbh_code
-	    item['cdbh'] = i.cdbh
-	    item['clsd'] = i.clsd
-            item['hpzl'] = i.hpzl
-	    item['kkbh'] = i.kkbh
-	    item['clbj'] = i.clbj
-	    item['imgurl'] = 'http://%s:8090/' % app.config['FLAG_IP'].get(i.flag, '10.47.223.148')+i.imgpath.replace('\\', '/')
+	    item['id'] = i[0]
+	    item['cltx_id'] = i[1]
+	    item['hphm'] = i[2]
+	    item['jgsj'] = str(i[3])
+	    item['hpys'] = i[4]
+	    item['hpys_id'] = i[5]
+	    item['hpys_code'] = i[6]
+	    item['kkdd'] = i[7]
+	    item['kkdd_id'] = i[8]
+	    item['fxbh'] = i[9]
+	    item['fxbh_code'] = i[10]
+	    item['cdbh'] = i[11]
+	    item['clsd'] = i[12]
+            item['hpzl'] = i[13]
+	    item['kkbh'] = i[14]
+	    item['clbj'] = i[15]
+	    item['imgurl'] = 'http://%s:8090/' % app.config['FLAG_IP'].get(i[18], '10.47.223.148')+i[17].replace('\\', '/')
+	    item['date_created'] = str(i[20])
 	    items.append(item)
 
 	return jsonify({'items': items, 'total_count': len(items)})
@@ -553,26 +589,28 @@ def hcq_final_get(start_id, end_id):
 def dyw_final_get(start_id, end_id):
     try:
 	items = []
-        c = db.session.query(FinalDYW).filter(FinalDYW.id>=start_id, FinalDYW.id<=end_id).all()
-        for i in c:
+	sql = ("select f.*, l.date_created from final_dyw as f left join log_dyw as l on f.id = l.final_id where f.id >= {0} and f.id <= {1}".format(start_id, end_id))
+        q = db.get_engine(app, bind='kakou').execute(sql).fetchall()
+        for i in q:
 	    item = {}
-	    item['id'] = i.id
-	    item['cltx_id'] = i.cltx_id
-	    item['hphm'] = i.hphm
-	    item['jgsj'] = str(i.jgsj)
-	    item['hpys'] = i.hpys
-	    item['hpys_id'] = i.hpys_id
-	    item['hpys_code'] = i.hpys_code
-	    item['kkdd'] = i.kkdd
-	    item['kkdd_id'] = i.kkdd_id
-	    item['fxbh'] = i.fxbh
-	    item['fxbh_code'] = i.fxbh_code
-	    item['cdbh'] = i.cdbh
-	    item['clsd'] = i.clsd
-            item['hpzl'] = i.hpzl
-	    item['kkbh'] = i.kkbh
-	    item['clbj'] = i.clbj
-	    item['imgurl'] = 'http://%s:8090/' % app.config['FLAG_IP'].get(i.flag, '10.47.223.150')+i.imgpath.replace('\\', '/')
+	    item['id'] = i[0]
+	    item['cltx_id'] = i[1]
+	    item['hphm'] = i[2]
+	    item['jgsj'] = str(i[3])
+	    item['hpys'] = i[4]
+	    item['hpys_id'] = i[5]
+	    item['hpys_code'] = i[6]
+	    item['kkdd'] = i[7]
+	    item['kkdd_id'] = i[8]
+	    item['fxbh'] = i[9]
+	    item['fxbh_code'] = i[10]
+	    item['cdbh'] = i[11]
+	    item['clsd'] = i[12]
+            item['hpzl'] = i[13]
+	    item['kkbh'] = i[14]
+	    item['clbj'] = i[15]
+	    item['imgurl'] = 'http://%s:8090/' % app.config['FLAG_IP'].get(i[18], '10.47.223.150')+i[17].replace('\\', '/')
+	    item['date_created'] = str(i[20])
 	    items.append(item)
 
 	return jsonify({'items': items, 'total_count': len(items)})
@@ -587,26 +625,28 @@ def dyw_final_get(start_id, end_id):
 def hy_final_get(start_id, end_id):
     try:
 	items = []
-        c = db.session.query(FinalHY).filter(FinalHY.id>=start_id, FinalHY.id<=end_id).all()
-        for i in c:
+	sql = ("select f.*, l.date_created from final_hy as f left join log_hy as l on f.id = l.final_id where f.id >= {0} and f.id <= {1}".format(start_id, end_id))
+        q = db.get_engine(app, bind='kakou').execute(sql).fetchall()
+        for i in q:
 	    item = {}
-	    item['id'] = i.id
-	    item['cltx_id'] = i.cltx_id
-	    item['hphm'] = i.hphm
-	    item['jgsj'] = str(i.jgsj)
-	    item['hpys'] = i.hpys
-	    item['hpys_id'] = i.hpys_id
-	    item['hpys_code'] = i.hpys_code
-	    item['kkdd'] = i.kkdd
-	    item['kkdd_id'] = i.kkdd_id
-	    item['fxbh'] = i.fxbh
-	    item['fxbh_code'] = i.fxbh_code
-	    item['cdbh'] = i.cdbh
-	    item['clsd'] = i.clsd
-            item['hpzl'] = i.hpzl
-	    item['kkbh'] = i.kkbh
-	    item['clbj'] = i.clbj
-	    item['imgurl'] = 'http://%s:8090/' % app.config['FLAG_IP'].get(i.flag, '10.47.223.152')+i.imgpath.replace('\\', '/')
+	    item['id'] = i[0]
+	    item['cltx_id'] = i[1]
+	    item['hphm'] = i[2]
+	    item['jgsj'] = str(i[3])
+	    item['hpys'] = i[4]
+	    item['hpys_id'] = i[5]
+	    item['hpys_code'] = i[6]
+	    item['kkdd'] = i[7]
+	    item['kkdd_id'] = i[8]
+	    item['fxbh'] = i[9]
+	    item['fxbh_code'] = i[10]
+	    item['cdbh'] = i[11]
+	    item['clsd'] = i[12]
+            item['hpzl'] = i[13]
+	    item['kkbh'] = i[14]
+	    item['clbj'] = i[15]
+	    item['imgurl'] = 'http://%s:8090/' % app.config['FLAG_IP'].get(i[18], '10.47.223.152')+i[17].replace('\\', '/')
+	    item['date_created'] = str(i[20])
 	    items.append(item)
 
 	return jsonify({'items': items, 'total_count': len(items)})
@@ -621,26 +661,28 @@ def hy_final_get(start_id, end_id):
 def hd_final_get(start_id, end_id):
     try:
 	items = []
-        c = db.session.query(FinalHD).filter(FinalHD.id>=start_id, FinalHD.id<=end_id).all()
-        for i in c:
+	sql = ("select f.*, l.date_created from final_hd as f left join log_hd as l on f.id = l.final_id where f.id >= {0} and f.id <= {1}".format(start_id, end_id))
+        q = db.get_engine(app, bind='kakou').execute(sql).fetchall()
+        for i in q:
 	    item = {}
-	    item['id'] = i.id
-	    item['cltx_id'] = i.cltx_id
-	    item['hphm'] = i.hphm
-	    item['jgsj'] = str(i.jgsj)
-	    item['hpys'] = i.hpys
-	    item['hpys_id'] = i.hpys_id
-	    item['hpys_code'] = i.hpys_code
-	    item['kkdd'] = i.kkdd
-	    item['kkdd_id'] = i.kkdd_id
-	    item['fxbh'] = i.fxbh
-	    item['fxbh_code'] = i.fxbh_code
-	    item['cdbh'] = i.cdbh
-	    item['clsd'] = i.clsd
-            item['hpzl'] = i.hpzl
-	    item['kkbh'] = i.kkbh
-	    item['clbj'] = i.clbj
-	    item['imgurl'] = 'http://%s:8090/' % app.config['FLAG_IP'].get(i.flag, '10.47.223.149')+i.imgpath.replace('\\', '/')
+	    item['id'] = i[0]
+	    item['cltx_id'] = i[1]
+	    item['hphm'] = i[2]
+	    item['jgsj'] = str(i[3])
+	    item['hpys'] = i[4]
+	    item['hpys_id'] = i[5]
+	    item['hpys_code'] = i[6]
+	    item['kkdd'] = i[7]
+	    item['kkdd_id'] = i[8]
+	    item['fxbh'] = i[9]
+	    item['fxbh_code'] = i[10]
+	    item['cdbh'] = i[11]
+	    item['clsd'] = i[12]
+            item['hpzl'] = i[13]
+	    item['kkbh'] = i[14]
+	    item['clbj'] = i[15]
+	    item['imgurl'] = 'http://%s:8090/' % app.config['FLAG_IP'].get(i[18], '10.47.223.149')+i[17].replace('\\', '/')
+	    item['date_created'] = str(i[20])
 	    items.append(item)
 
 	return jsonify({'items': items, 'total_count': len(items)})
@@ -655,28 +697,29 @@ def hd_final_get(start_id, end_id):
 def zk_final_get(start_id, end_id):
     try:
 	items = []
-        c = db.session.query(FinalZK).filter(FinalZK.id>=start_id, FinalZK.id<=end_id).all()
-        for i in c:
+	sql = ("select f.*, l.date_created from final_zk as f left join log_zk as l on f.id = l.final_id where f.id >= {0} and f.id <= {1}".format(start_id, end_id))
+        q = db.get_engine(app, bind='kakou').execute(sql).fetchall()
+        for i in q:
 	    item = {}
-	    item['id'] = i.id
-	    item['cltx_id'] = i.cltx_id
-	    item['hphm'] = i.hphm
-	    item['jgsj'] = str(i.jgsj)
-	    item['hpys'] = i.hpys
-	    item['hpys_id'] = i.hpys_id
-	    item['hpys_code'] = i.hpys_code
-	    item['kkdd'] = i.kkdd
-	    item['kkdd_id'] = i.kkdd_id
-	    item['fxbh'] = i.fxbh
-	    item['fxbh_code'] = i.fxbh_code
-	    item['cdbh'] = i.cdbh
-	    item['clsd'] = i.clsd
-            item['hpzl'] = i.hpzl
-	    item['kkbh'] = i.kkbh
-	    item['clbj'] = i.clbj
-	    item['imgurl'] = 'http://%s:8090/' % app.config['FLAG_IP'].get(i.flag, '10.47.223.152')+i.imgpath.replace('\\', '/')
+	    item['id'] = i[0]
+	    item['cltx_id'] = i[1]
+	    item['hphm'] = i[2]
+	    item['jgsj'] = str(i[3])
+	    item['hpys'] = i[4]
+	    item['hpys_id'] = i[5]
+	    item['hpys_code'] = i[6]
+	    item['kkdd'] = i[7]
+	    item['kkdd_id'] = i[8]
+	    item['fxbh'] = i[9]
+	    item['fxbh_code'] = i[10]
+	    item['cdbh'] = i[11]
+	    item['clsd'] = i[12]
+            item['hpzl'] = i[13]
+	    item['kkbh'] = i[14]
+	    item['clbj'] = i[15]
+	    item['imgurl'] = 'http://%s:8090/' % app.config['FLAG_IP'].get(i[18], '10.47.223.152')+i[17].replace('\\', '/')
+	    item['date_created'] = str(i[20])
 	    items.append(item)
-
 	return jsonify({'items': items, 'total_count': len(items)})
     except Exception as e:
 	logger.error(e)
@@ -689,26 +732,64 @@ def zk_final_get(start_id, end_id):
 def lm_final_get(start_id, end_id):
     try:
 	items = []
-        c = db.session.query(FinalLM).filter(FinalLM.id>=start_id, FinalLM.id<=end_id).all()
-        for i in c:
+	sql = ("select f.*, l.date_created from final_lm as f left join log_lm as l on f.id = l.final_id where f.id >= {0} and f.id <= {1}".format(start_id, end_id))
+        q = db.get_engine(app, bind='kakou').execute(sql).fetchall()
+        for i in q:
 	    item = {}
-	    item['id'] = i.id
-	    item['cltx_id'] = i.cltx_id
-	    item['hphm'] = i.hphm
-	    item['jgsj'] = str(i.jgsj)
-	    item['hpys'] = i.hpys
-	    item['hpys_id'] = i.hpys_id
-	    item['hpys_code'] = i.hpys_code
-	    item['kkdd'] = i.kkdd
-	    item['kkdd_id'] = i.kkdd_id
-	    item['fxbh'] = i.fxbh
-	    item['fxbh_code'] = i.fxbh_code
-	    item['cdbh'] = i.cdbh
-	    item['clsd'] = i.clsd
-            item['hpzl'] = i.hpzl
-	    item['kkbh'] = i.kkbh
-	    item['clbj'] = i.clbj
-	    item['imgurl'] = 'http://%s:8090/' % app.config['FLAG_IP'].get(i.flag, '10.47.223.149')+i.imgpath.replace('\\', '/')
+	    item['id'] = i[0]
+	    item['cltx_id'] = i[1]
+	    item['hphm'] = i[2]
+	    item['jgsj'] = str(i[3])
+	    item['hpys'] = i[4]
+	    item['hpys_id'] = i[5]
+	    item['hpys_code'] = i[6]
+	    item['kkdd'] = i[7]
+	    item['kkdd_id'] = i[8]
+	    item['fxbh'] = i[9]
+	    item['fxbh_code'] = i[10]
+	    item['cdbh'] = i[11]
+	    item['clsd'] = i[12]
+            item['hpzl'] = i[13]
+	    item['kkbh'] = i[14]
+	    item['clbj'] = i[15]
+	    item['imgurl'] = 'http://%s:8090/' % app.config['FLAG_IP'].get(i[18], '10.47.223.149')+i[17].replace('\\', '/')
+	    item['date_created'] = str(i[20])
+	    items.append(item)
+
+	return jsonify({'items': items, 'total_count': len(items)})
+    except Exception as e:
+	logger.error(e)
+
+
+@app.route('/final/bl/<int:start_id>/<int:end_id>', methods=['GET'])
+@limiter.limit('500/minute')
+#@limiter.exempt
+#@auth.login_required
+def bl_final_get(start_id, end_id):
+    try:
+	items = []
+	sql = ("select f.*, l.date_created from final_bl as f left join log_bl as l on f.id = l.final_id where f.id >= {0} and f.id <= {1}".format(start_id, end_id))
+        q = db.get_engine(app, bind='kakou').execute(sql).fetchall()
+        for i in q:
+	    item = {}
+	    item['id'] = i[0]
+	    item['cltx_id'] = i[1]
+	    item['hphm'] = i[2]
+	    item['jgsj'] = str(i[3])
+	    item['hpys'] = i[4]
+	    item['hpys_id'] = i[5]
+	    item['hpys_code'] = i[6]
+	    item['kkdd'] = i[7]
+	    item['kkdd_id'] = i[8]
+	    item['fxbh'] = i[9]
+	    item['fxbh_code'] = i[10]
+	    item['cdbh'] = i[11]
+	    item['clsd'] = i[12]
+            item['hpzl'] = i[13]
+	    item['kkbh'] = i[14]
+	    item['clbj'] = i[15]
+	    item['imgurl'] = 'http://%s:8090/' % app.config['FLAG_IP'].get(i[18], '10.47.223.149')+i[17].replace('\\', '/')
+	    item['date_created'] = str(i[20])
 	    items.append(item)
 
 	return jsonify({'items': items, 'total_count': len(items)})
