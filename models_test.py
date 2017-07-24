@@ -1,4 +1,4 @@
-﻿# -*- coding: utf-8 -*-
+# -*- coding: utf-8 -*-
 import arrow
 
 from app import db, app
@@ -77,15 +77,25 @@ def test_temp_add2():
     db.session.commit()
 
 def test_temp_find():
-    c = db.session.query(FinalLM).filter(FinalLM.id>=1, FinalLM.id<=1).all()
+    c = db.session.query(TempHCQ2).filter(TempHCQ2.id==55382841).first()
     #c = FinalLM.query.filter_by(id=1).first()
-    print c
+    print c.jgsj
+    print c.hphm
 
 def test_final_find():
     sql = ("select max(id) from final_lm")
     q = db.get_engine(app, bind='kakou').execute(sql).fetchone()
     print q[0]
     #result = {'maxid': q.fetchone()[0]}
+
+def temp_table_test():
+    help(BaseTemp)
+    help(TempDYW)
+
+def test_time():
+    q = db.session.query(Test).filter(Test.id==1).first()
+    print q.id
+    print q.time
 
 if __name__ == '__main__':
     #hpys_test()
@@ -103,6 +113,9 @@ if __name__ == '__main__':
     #test_temp_add()
     #test_temp_add2()
     #test_temp_find()
-    test_final_find()
+    #test_final_find()
+    #temp_table_test()
+    #test_temp_find()
+    test_time()
 
 

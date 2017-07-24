@@ -64,8 +64,13 @@ DO INSTEAD
             """.format(d1, d2, d3, d1)
         print s
 
+def test(a=0, b=1):
+    print a, b
+    
+
 if __name__ == "__main__":
     #create_table()
     #create_index()
     #create_trigger()
-    create_rule()
+    #create_rule()
+    test()
