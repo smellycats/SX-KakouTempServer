@@ -2,7 +2,7 @@
 import json
 from functools import wraps
 import shutil
-import cStringIO
+import random
 
 import arrow
 import requests
@@ -10,6 +10,7 @@ from flask import g, request, make_response, jsonify, abort
 from flask_restful import reqparse, abort, Resource
 from passlib.hash import sha256_crypt
 from itsdangerous import TimedJSONWebSignatureSerializer as Serializer
+from sqlalchemy import func
 
 from . import db, app, auth, cache, limiter, logger, access_logger
 from models import *
@@ -44,32 +45,6 @@ def verify_pw(username, password):
     return False
 
 
-def verify_token(f):
-    """token验证装饰器"""
-    @wraps(f)
-    def decorated_function(*args, **kwargs):
-        if app.config['TOKEN_OPEN']:
-            g.uid = helper.ip2num(request.remote_addr)
-            g.scope = set(['all'])
-        else:
-            if not request.headers.get('Access-Token'):
-                return jsonify({'status': '401.6',
-                                'message': 'missing token header'}), 401
-            token_result = verify_auth_token(request.headers['Access-Token'],
-                                             app.config['SECRET_KEY'])
-            if not token_result:
-                return jsonify({'status': '401.7',
-                                'message': 'invalid token'}), 401
-            elif token_result == 'expired':
-                return jsonify({'status': '401.8',
-                                'message': 'token expired'}), 401
-            g.uid = token_result['uid']
-            g.scope = set(token_result['scope'])
-
-        return f(*args, **kwargs)
-    return decorated_function
-
-
 def verify_scope(scope):
     def scope(f):
         """权限范围验证装饰器"""
@@ -85,80 +60,94 @@ def verify_scope(scope):
 
 @app.route('/')
 @limiter.limit("5000/hour")
-#@auth.login_required
 def index_get():
     result = {
-        'user_url': 'http://%suser{/user_id}' % (request.url_root),
-        'scope_url': 'http://%sscope' % (request.url_root),
-        'hcq1_url': 'http://%skakou/hcq1' % (request.url_root)
+        'user_url': '%suser{/user_id}' % (request.url_root),
+        'scope_url': '%sscope' % (request.url_root),
+        'hcq1_url': '%skakou/hcq1' % (request.url_root)
     }
     header = {'Cache-Control': 'public, max-age=60, s-maxage=60'}
     return jsonify(result), 200, header
     
-
-@app.route('/user', methods=['OPTIONS'])
-@limiter.limit('5000/hour')
-def user_options():
-    return jsonify(), 200
 
 @app.route('/user/<int:user_id>', methods=['GET'])
 @limiter.limit('5000/hour')
 @auth.login_required
 def user_get(user_id):
     user = Users.query.filter_by(id=user_id, banned=0).first()
-    if user:
-        result = {
-            'id': user.id,
-            'username': user.username,
-            'scope': user.scope,
-            'date_created': str(user.date_created),
-            'date_modified': str(user.date_modified),
-            'banned': user.banned
-        }
-        return jsonify(result), 200
-    else:
+    if user is None:
         abort(404)
-
-@app.route('/user/<int:user_id>', methods=['POST', 'PATCH'])
-@limiter.limit('5000/hour')
-@auth.login_required
-def user_patch(user_id):
-    if not request.json:
-        return jsonify({'message': 'Problems parsing JSON'}), 415
-    if not request.json.get('scope', None):
-        error = {
-            'resource': 'user',
-            'field': 'scope',
-            'code': 'missing_field'
-        }
-        return jsonify({'message': 'Validation Failed', 'errors': error}), 422
-    # 所有权限范围
-    all_scope = set()
-    for i in Scope.query.all():
-        all_scope.add(i.name)
-    # 授予的权限范围
-    request_scope = set(request.json.get('scope', u'null').split(','))
-    # 求交集后的权限
-    u_scope = ','.join(all_scope & request_scope)
-
-    db.session.query(Users).filter_by(id=user_id).update(
-        {'scope': u_scope, 'date_modified': arrow.now().datetime})
-    db.session.commit()
-
-    user = Users.query.filter_by(id=user_id).first()
-
-    return jsonify({
+    result = {
         'id': user.id,
         'username': user.username,
         'scope': user.scope,
-        'date_created': str(user.date_created),
-        'date_modified': str(user.date_modified),
+        'date_created': user.date_created.strftime('%Y-%m-%d %H:%M:%S'),
+        'date_modified': user.date_modified.strftime('%Y-%m-%d %H:%M:%S'),
         'banned': user.banned
-    }), 201
+    }
+    return jsonify(result), 200
+
+
+@app.route('/user', methods=['GET'])
+@limiter.limit('5000/hour')
+@auth.login_required
+def user_list_get():
+    try:
+        limit = int(request.args.get('per_page', 20))
+        offset = (int(request.args.get('page', 1)) - 1) * limit
+        s = db.session.query(Users)
+        q = request.args.get('q', None)
+        if q is not None:
+            s = s.filter(Users.username.like("%{0}%".format(q)))
+        user = s.limit(limit).offset(offset).all()
+        total = s.count()
+        items = []
+        for i in user:
+            items.append({
+                'id': i.id,
+                'username': i.username,
+                'scope': i.scope,
+                'date_created': i.date_created.strftime('%Y-%m-%d %H:%M:%S'),
+                'date_modified': i.date_modified.strftime('%Y-%m-%d %H:%M:%S'),
+                'banned': i.banned})
+    except Exception as e:
+        logger.exception(e)
+    return jsonify({'total_count': total, 'items': items}), 200
+
+
+@app.route('/user/<int:user_id>', methods=['POST', 'PUT'])
+@limiter.limit('5000/hour')
+@auth.login_required
+def user_put(user_id):
+    if not request.json:
+        return jsonify({'message': 'Problems parsing JSON'}), 415
+    user = Users.query.filter_by(id=user_id).first()
+    if user is None:
+        abort(404)
+    if request.json.get('scope', None) is not None:
+        # 所有权限范围
+        all_scope = set()
+        for i in Scope.query.all():
+            all_scope.add(i.name)
+        # 授予的权限范围
+        request_scope = set(request.json.get('scope', u'null').split(','))
+        # 求交集后的权限
+        u_scope = ','.join(all_scope & request_scope)
+        user.scope = u_scope
+    if request.json.get('password', None) is not None:
+        user.password = sha256_crypt.encrypt(
+            request.json['password'], rounds=app.config['ROUNDS'])
+    if request.json.get('banned', None) is not None:
+        user.banned = request.json['banned']
+    user.date_modified = arrow.now('PRC').datetime.replace(tzinfo=None)
+    db.session.commit()
+
+    return jsonify(), 204
+
 
 @app.route('/user', methods=['POST'])
 @limiter.limit('5000/hour')
-#@auth.login_required
+@auth.login_required
 def user_post():
     if not request.json:
         return jsonify({'message': 'Problems parsing JSON'}), 415
@@ -191,8 +180,6 @@ def user_post():
 
     password_hash = sha256_crypt.encrypt(
         request.json['password'], rounds=app.config['ROUNDS'])
-    print password_hash
-    return
     # 所有权限范围
     all_scope = set()
     for i in Scope.query.all():
@@ -201,24 +188,21 @@ def user_post():
     request_scope = set(request.json.get('scope', u'null').split(','))
     # 求交集后的权限
     u_scope = ','.join(all_scope & request_scope)
+    t = arrow.now('PRC').datetime.replace(tzinfo=None)
     u = Users(username=request.json['username'], password=password_hash,
-              scope=u_scope, banned=0)
+              date_created=t, date_modified=t, scope=u_scope, banned=0)
     db.session.add(u)
     db.session.commit()
     result = {
         'id': u.id,
         'username': u.username,
         'scope': u.scope,
-        'date_created': str(u.date_created),
-        'date_modified': str(u.date_modified),
+        'date_created': u.date_created.strftime('%Y-%m-%d %H:%M:%S'),
+        'date_modified': u.date_modified.strftime('%Y-%m-%d %H:%M:%S'),
         'banned': u.banned
     }
     return jsonify(result), 201
 
-@app.route('/scope', methods=['OPTIONS'])
-@limiter.limit('5000/hour')
-def scope_options():
-    return jsonify(), 200
 
 @app.route('/scope', methods=['GET'])
 @limiter.limit('5000/hour')
@@ -226,491 +210,277 @@ def scope_get():
     items = map(helper.row2dict, Scope.query.all())
     return jsonify({'total_count': len(items), 'items': items}), 200
 
-    
-@app.route('/token', methods=['OPTIONS'])
-@limiter.limit('5000/hour')
-def token_options():
-    return jsonify(), 200
 
-@app.route('/token', methods=['POST'])
-@limiter.limit('5/minute')
-def token_post():
+@app.route('/temp/<string:city>', methods=['POST'])
+@limiter.limit('5000/minute')
+#@limiter.exempt
+#@auth.login_required
+def temp_post(city):
+    model_dict = {
+        'hcq': random.choice([TempHCQ1(), TempHCQ2(), TempHCQ3()]),
+        'dyw': TempDYW(),
+        'hy': TempHY(),
+        'hd': TempHD(),
+        'zk': TempZK(),
+        'lm': TempLM(),
+        'bl': TempBL()
+    }
+    if not city in model_dict.keys():
+        abort(405)
     try:
-        if request.json is None:
-            return jsonify({'message': 'Problems parsing JSON'}), 415
-        if not request.json.get('username', None):
-            error = {
-                'resource': 'Token',
-                'field': 'username',
-                'code': 'missing_field'
+        for i in request.json:
+            t = model_dict[city]
+            t.cltx_id = i['id']
+            t.hphm = i['hphm']
+            t.jgsj = i['jgsj']
+            t.hpys = i['hpys']
+            t.hpys_id = i['hpys_id']
+            t.hpys_code = i['hpys_code']
+            t.kkdd = i['kkdd']
+            t.kkdd_id = i['kkdd_id']
+            t.fxbh = i['fxbh']
+            t.fxbh_code = i['fxbh_code']
+            t.cdbh = i['cdbh']
+            t.clsd = i['clsd']
+            t.hpzl = i['hpzl']
+            t.kkbh = ''
+            t.clbj = i['clbj']
+            t.imgurl = i['imgurl']
+            t.flag = 0
+            t.banned = 0
+            db.session.add(t)
+    	db.session.commit()
+        
+	return jsonify({'total': len(request.json)}), 201
+    except Exception as e:
+	logger.exception(e)
+
+
+@app.route('/final/<string:city>', methods=['POST'])
+@limiter.limit('5000/minute')
+#@limiter.exempt
+#@auth.login_required
+def final_post(city):
+    model_dict = {
+        'hcq': FinalHCQ(),
+        'dyw': FinalDYW(),
+        'hy': FinalHY(),
+        'hd': FinalHD(),
+        'zk': FinalZK(),
+        'lm': FinalLM(),
+        'bl': FinalBL()
+    }
+    if not city in model_dict.keys():
+        abort(405)
+    try:
+        for i in request.json:
+            t = model_dict[city]
+            t.cltx_id = i['id']
+            t.hphm = i['hphm']
+            t.jgsj = i['jgsj']
+            t.hpys = i['hpys']
+            t.hpys_id = i['hpys_id']
+            t.hpys_code = i['hpys_code']
+            t.kkdd = i['kkdd']
+            t.kkdd_id = i['kkdd_id']
+            t.fxbh = i['fxbh']
+            t.fxbh_code = i['fxbh_code']
+            t.cdbh = i['cdbh']
+            t.clsd = i['clsd']
+            t.hpzl = i['hpzl']
+            t.kkbh = ''
+            t.clbj = i['clbj']
+            t.imgurl = i['imgurl']
+            t.imgpath = i['imgpath']
+            t.flag = 0
+            t.banned = 0
+            db.session.add(t)
+    	db.session.commit()
+        
+	return jsonify({'total': len(request.json)}), 201
+    except Exception as e:
+	logger.exception(e)
+
+
+@app.route('/maxid/<string:city>', methods=['GET'])
+@limiter.limit('5000/minute')
+#@limiter.exempt
+#@auth.login_required
+def maxid_get(city):
+    model_dict = {
+        'hcq': FinalHCQ,
+        'dyw': FinalDYW,
+        'hy': FinalHY,
+        'hd': FinalHD,
+        'zk': FinalZK,
+        'lm': FinalLM,
+        'bl': FinalBL
+    }
+    if not city in model_dict.keys():
+        abort(405)
+    try:
+        q = db.session.query(func.max(model_dict[city].id)).first()
+	return jsonify({'maxid': q[0]}), 200
+    except Exception as e:
+	logger.exception(e)
+
+
+@app.route('/temp/<string:city>', methods=['GET'])
+@limiter.limit('500/minute')
+#@limiter.exempt
+#@auth.login_required
+def temp_list_get(city):
+    q = request.args.get('q', None)
+    if q is None:
+	abort(400)
+    try:
+	args = json.loads(q)
+    except Exception as e:
+	logger.error(e)
+	abort(400)
+    model_dict = {
+        'hcq1': TempHCQ1,
+        'hcq2': TempHCQ2,
+        'hcq3': TempHCQ3,
+        'dyw': TempDYW,
+        'hy': TempHY,
+        'hd': TempHD,
+        'zk': TempZK,
+        'lm': TempLM,
+        'bl': TempBL
+    }
+    if not city in model_dict.keys():
+        abort(405)
+    try:
+        s = db.session.query(model_dict[city])
+	if args.get('startid', None) is not None:
+	    s = s.filter(model_dict[city].id >= args['startid'])
+	if args.get('endid', None) is not None:
+            s = s.filter(model_dict[city].id <= args['endid'])
+
+        if len(s.all())==0:
+            return jsonify({'items': [], 'total_count': 0})
+	items = []
+        for i in s.all():
+	    item = {
+                'id': i.id,
+                'cltx_id': i.cltx_id,
+                'hphm': i.hphm,
+                'jgsj': i.jgsj.strftime('%Y-%m-%d %H:%M:%S'),
+                'hpys': i.hpys,
+                'hpys_id': i.hpys_id,
+                'hpys_code': i.hpys_code,
+                'kkdd': i.kkdd,
+                'kkdd_id': i.kkdd_id,
+                'fxbh': i.fxbh,
+                'fxbh_code': i.fxbh_code,
+                'cdbh': i.cdbh,
+                'clsd': i.clsd,
+                'hpzl': i.hpzl,
+                'kkbh': i.kkbh,
+                'clbj': i.clbj,
+                'imgurl': i.imgurl,
+                'flag': i.flag
             }
-            return jsonify({'message': 'Validation Failed', 'errors': error}), 422
-        if not request.json.get('password', None):
-            error = {'resource': 'Token', 'field': 'password',
-                     'code': 'missing_field'}
-            return jsonify({'message': 'Validation Failed', 'errors': error}), 422
-        user = Users.query.filter_by(username=request.json.get('username'),
-                                     banned=0).first()
-        if not user:
-            return jsonify({'message': 'username or password error'}), 422
-        if not sha256_crypt.verify(request.json.get('password'), user.password):
-            return jsonify({'message': 'username or password error'}), 422
-
-        s = Serializer(app.config['SECRET_KEY'],
-                       expires_in=app.config['EXPIRES'])
-        token = s.dumps({'uid': user.id, 'scope': user.scope.split(',')})
-    except Exception as e:
-        print e
-
-    return jsonify({
-        'uid': user.id,
-        'access_token': token,
-        'token_type': 'self',
-        'scope': user.scope,
-        'expires_in': app.config['EXPIRES']
-    }), 201
-
-
-@app.route('/kakou/hcq1', methods=['POST'])
-@limiter.limit('500/minute')
-#@limiter.exempt
-#@auth.login_required
-def hcq1_post():
-    try:
-        for i in request.json:
-            t = TempHCQ1(cltx_id=i['id'], hphm=i['hphm'], jgsj=i['jgsj'], hpys=i['hpys'],
-                         hpys_id=i['hpys_id'], hpys_code=i['hpys_code'], kkdd=i['kkdd'],
-                         kkdd_id=i['kkdd_id'], fxbh=i['fxbh'], fxbh_code=i['fxbh_code'],
-		         cdbh=i['cdbh'], clsd=i['clsd'], hpzl=i['hpzl'], kkbh='',
-			 clbj=i['clbj'], imgurl=i['imgurl'], flag=0, banned=0)
-            db.session.add(t)
-    	db.session.commit()
-        
-	return jsonify({'total': len(request.json)}), 201
-    except Exception as e:
-	logger.error(e)
-
-
-@app.route('/kakou/hcq2', methods=['POST'])
-@limiter.limit('500/minute')
-#@limiter.exempt
-#@auth.login_required
-def hcq2_post():
-    try:
-        for i in request.json:
-            t = TempHCQ2(cltx_id=i['id'], hphm=i['hphm'], jgsj=i['jgsj'], hpys=i['hpys'],
-                         hpys_id=i['hpys_id'], hpys_code=i['hpys_code'], kkdd=i['kkdd'],
-                         kkdd_id=i['kkdd_id'], fxbh=i['fxbh'], fxbh_code=i['fxbh_code'],
-		         cdbh=i['cdbh'], clsd=i['clsd'], hpzl=i['hpzl'], kkbh='',
-			 clbj=i['clbj'], imgurl=i['imgurl'], flag=0, banned=0)
-            db.session.add(t)
-    	db.session.commit()
-        
-	return jsonify({'total': len(request.json)}), 201
-    except Exception as e:
-	logger.error(e)
-
-@app.route('/kakou/hcq3', methods=['POST'])
-@limiter.limit('500/minute')
-#@limiter.exempt
-#@auth.login_required
-def hcq3_post():
-    try:
-        for i in request.json:
-            t = TempHCQ3(cltx_id=i['id'], hphm=i['hphm'], jgsj=i['jgsj'], hpys=i['hpys'],
-                         hpys_id=i['hpys_id'], hpys_code=i['hpys_code'], kkdd=i['kkdd'],
-                         kkdd_id=i['kkdd_id'], fxbh=i['fxbh'], fxbh_code=i['fxbh_code'],
-		         cdbh=i['cdbh'], clsd=i['clsd'], hpzl=i['hpzl'], kkbh='',
-			 clbj=i['clbj'], imgurl=i['imgurl'], flag=0, banned=0)
-            db.session.add(t)
-    	db.session.commit()
-        
-	return jsonify({'total': len(request.json)}), 201
-    except Exception as e:
-	logger.error(e)
-
-@app.route('/kakou/dyw', methods=['POST'])
-@limiter.limit('500/minute')
-#@limiter.exempt
-#@auth.login_required
-def dyw_post():
-    try:
-        for i in request.json:
-            t = TempDYW(cltx_id=i['id'], hphm=i['hphm'], jgsj=i['jgsj'], hpys=i['hpys'],
-                        hpys_id=i['hpys_id'], hpys_code=i['hpys_code'], kkdd=i['kkdd'],
-                        kkdd_id=i['kkdd_id'], fxbh=i['fxbh'], fxbh_code=i['fxbh_code'],
-		        cdbh=i['cdbh'], clsd=i['clsd'], hpzl=i['hpzl'], kkbh='',
-			clbj=i['clbj'], imgurl=i['imgurl'], flag=0, banned=0)
-            db.session.add(t)
-    	db.session.commit()
-        
-	return jsonify({'total': len(request.json)}), 201
-    except Exception as e:
-	logger.error(e)
-
-
-@app.route('/kakou/hy', methods=['POST'])
-@limiter.limit('500/minute')
-#@limiter.exempt
-#@auth.login_required
-def hy_post():
-    try:
-        for i in request.json:
-            t = TempHY(cltx_id=i['id'], hphm=i['hphm'], jgsj=i['jgsj'], hpys=i['hpys'],
-                       hpys_id=i['hpys_id'], hpys_code=i['hpys_code'], kkdd=i['kkdd'],
-                       kkdd_id=i['kkdd_id'], fxbh=i['fxbh'], fxbh_code=i['fxbh_code'],
-		       cdbh=i['cdbh'], clsd=i['clsd'], hpzl=i['hpzl'], kkbh='',
-		       clbj=i['clbj'], imgurl=i['imgurl'], flag=0, banned=0)
-            db.session.add(t)
-    	db.session.commit()
-        
-	return jsonify({'total': len(request.json)}), 201
-    except Exception as e:
-	logger.error(e)
-
-
-@app.route('/kakou/hd', methods=['POST'])
-@limiter.limit('500/minute')
-#@limiter.exempt
-#@auth.login_required
-def hd_post():
-    try:
-        for i in request.json:
-            t = TempHD(cltx_id=i['id'], hphm=i['hphm'], jgsj=i['jgsj'], hpys=i['hpys'],
-                       hpys_id=i['hpys_id'], hpys_code=i['hpys_code'], kkdd=i['kkdd'],
-                       kkdd_id=i['kkdd_id'], fxbh=i['fxbh'], fxbh_code=i['fxbh_code'],
-		       cdbh=i['cdbh'], clsd=i['clsd'], hpzl=i['hpzl'], kkbh=i['kkbh'],
-		       clbj=i['clbj'], imgurl=i['imgurl'], flag=0, banned=0)
-            db.session.add(t)
-    	db.session.commit()
-        
-	return jsonify({'total': len(request.json)}), 201
-    except Exception as e:
-	logger.error(e)
-
-
-@app.route('/kakou/zk', methods=['POST'])
-@limiter.limit('500/minute')
-#@limiter.exempt
-#@auth.login_required
-def zk_post():
-    try:
-        for i in request.json:
-            t = TempZK(cltx_id=i['id'], hphm=i['hphm'], jgsj=i['jgsj'], hpys=i['hpys'],
-                       hpys_id=i['hpys_id'], hpys_code=i['hpys_code'], kkdd=i['kkdd'],
-                       kkdd_id=i['kkdd_id'], fxbh=i['fxbh'], fxbh_code=i['fxbh_code'],
-		       cdbh=i['cdbh'], clsd=i['clsd'], hpzl=i['hpzl'], kkbh='',
-		       clbj=i['clbj'], imgurl=i['imgurl'], flag=0, banned=0)
-            db.session.add(t)
-    	db.session.commit()
-        
-	return jsonify({'total': len(request.json)}), 201
-    except Exception as e:
-	logger.error(e)
-
-
-@app.route('/kakou/lm', methods=['POST'])
-@limiter.limit('500/minute')
-#@limiter.exempt
-#@auth.login_required
-def lm_post():
-    try:
-        for i in request.json:
-            t = TempLM(cltx_id=i['id'], hphm=i['hphm'], jgsj=i['jgsj'], hpys=i['hpys'],
-                       hpys_id=i['hpys_id'], hpys_code=i['hpys_code'], kkdd=i['kkdd'],
-                       kkdd_id=i['kkdd_id'], fxbh=i['fxbh'], fxbh_code=i['fxbh_code'],
-		       cdbh=i['cdbh'], clsd=i['clsd'], hpzl=i['hpzl'], kkbh='',
-		       clbj=i['clbj'], imgurl=i['imgurl'], flag=0, banned=0)
-            db.session.add(t)
-    	db.session.commit()
-        
-	return jsonify({'total': len(request.json)}), 201
-    except Exception as e:
-	logger.error(e)
-
-
-@app.route('/maxid/hcq', methods=['GET'])
-@limiter.limit('500/minute')
-#@limiter.exempt
-#@auth.login_required
-def hcq_maxid_get():
-    try:
-        sql = ("select max(id) from final_hcq")
-        q = db.get_engine(app, bind='kakou').execute(sql).fetchone()
-        
-	return jsonify({'maxid': q[0]}), 200
-    except Exception as e:
-	logger.error(e)
-
-@app.route('/maxid/dyw', methods=['GET'])
-@limiter.limit('500/minute')
-#@limiter.exempt
-#@auth.login_required
-def dyw_maxid_get():
-    try:
-        sql = ("select max(id) from final_dyw")
-        q = db.get_engine(app, bind='kakou').execute(sql).fetchone()
-        
-	return jsonify({'maxid': q[0]}), 200
-    except Exception as e:
-	logger.error(e)
-
-
-@app.route('/maxid/hy', methods=['GET'])
-@limiter.limit('500/minute')
-#@limiter.exempt
-#@auth.login_required
-def hy_maxid_get():
-    try:
-        sql = ("select max(id) from final_hy")
-        q = db.get_engine(app, bind='kakou').execute(sql).fetchone()
-        
-	return jsonify({'maxid': q[0]}), 200
-    except Exception as e:
-	logger.error(e)
-
-
-@app.route('/maxid/hd', methods=['GET'])
-@limiter.limit('500/minute')
-#@limiter.exempt
-#@auth.login_required
-def hd_maxid_get():
-    try:
-        sql = ("select max(id) from final_hd")
-        q = db.get_engine(app, bind='kakou').execute(sql).fetchone()
-        
-	return jsonify({'maxid': q[0]}), 200
-    except Exception as e:
-	logger.error(e)
-
-
-@app.route('/maxid/zk', methods=['GET'])
-@limiter.limit('500/minute')
-#@limiter.exempt
-#@auth.login_required
-def zk_maxid_get():
-    try:
-        sql = ("select max(id) from final_zk")
-        q = db.get_engine(app, bind='kakou').execute(sql).fetchone()
-        
-	return jsonify({'maxid': q[0]}), 200
-    except Exception as e:
-	logger.error(e)
-
-
-@app.route('/maxid/lm', methods=['GET'])
-@limiter.limit('500/minute')
-#@limiter.exempt
-#@auth.login_required
-def lm_maxid_get():
-    try:
-        sql = ("select max(id) from final_lm")
-        q = db.get_engine(app, bind='kakou').execute(sql).fetchone()
-        
-	return jsonify({'maxid': q[0]}), 200
-    except Exception as e:
-	logger.error(e)
-
-
-@app.route('/final/hcq/<int:start_id>/<int:end_id>', methods=['GET'])
-@limiter.limit('500/minute')
-#@limiter.exempt
-#@auth.login_required
-def hcq_final_get(start_id, end_id):
-    try:
-	items = []
-        c = db.session.query(FinalHCQ).filter(FinalHCQ.id>=start_id, FinalHCQ.id<=end_id).all()
-        for i in c:
-	    item = {}
-	    item['id'] = i.id
-	    item['cltx_id'] = i.cltx_id
-	    item['hphm'] = i.hphm
-	    item['jgsj'] = str(i.jgsj)
-	    item['hpys'] = i.hpys
-	    item['hpys_id'] = i.hpys_id
-	    item['hpys_code'] = i.hpys_code
-	    item['kkdd'] = i.kkdd
-	    item['kkdd_id'] = i.kkdd_id
-	    item['fxbh'] = i.fxbh
-	    item['fxbh_code'] = i.fxbh_code
-	    item['cdbh'] = i.cdbh
-	    item['clsd'] = i.clsd
-            item['hpzl'] = i.hpzl
-	    item['kkbh'] = i.kkbh
-	    item['clbj'] = i.clbj
-	    item['imgurl'] = 'http://%s:8090/' % app.config['FLAG_IP'].get(i.flag, '10.47.223.148')+i.imgpath.replace('\\', '/')
 	    items.append(item)
 
 	return jsonify({'items': items, 'total_count': len(items)})
     except Exception as e:
-	logger.error(e)
+	logger.exception(e)
 
 
-@app.route('/final/dyw/<int:start_id>/<int:end_id>', methods=['GET'])
+@app.route('/final/<string:city>', methods=['GET'])
 @limiter.limit('500/minute')
 #@limiter.exempt
 #@auth.login_required
-def dyw_final_get(start_id, end_id):
+def final_list_get(city):
+    q = request.args.get('q', None)
+    if q is None:
+	abort(400)
     try:
+	args = json.loads(q)
+    except Exception as e:
+	logger.error(e)
+	abort(400)
+    model_dict = {
+        'hcq': (FinalHCQ, LogHCQ),
+        'dyw': (FinalDYW, LogDYW),
+        'hy': (FinalHY, LogHY),
+        'hd': (FinalHD, LogHD),
+        'zk': (FinalZK, LogZK),
+        'lm': (FinalLM, LogLM),
+        'bl': (FinalBL, LogBL)
+    }
+    if not city in model_dict.keys():
+        abort(405)
+
+    try:
+        query = db.session.query(model_dict[city][0])
+	if args.get('startid', None):
+	    query = query.filter(model_dict[city][0].id >= args['startid'])
+	if args.get('endid', None):
+            query = query.filter(model_dict[city][0].id <= args['endid'])
+        if len(query.all())==0:
+            return jsonify({'items': [], 'total_count': 0})
+	query2 = db.session.query(model_dict[city][1])
+	if args.get('startid', None):
+	    query2 = query2.filter(model_dict[city][1].final_id >= args['startid'])
+	if args.get('endid', None):
+            query2 = query2.filter(model_dict[city][1].final_id <= args['endid'])
 	items = []
-        c = db.session.query(FinalDYW).filter(FinalDYW.id>=start_id, FinalDYW.id<=end_id).all()
-        for i in c:
-	    item = {}
-	    item['id'] = i.id
-	    item['cltx_id'] = i.cltx_id
-	    item['hphm'] = i.hphm
-	    item['jgsj'] = str(i.jgsj)
-	    item['hpys'] = i.hpys
-	    item['hpys_id'] = i.hpys_id
-	    item['hpys_code'] = i.hpys_code
-	    item['kkdd'] = i.kkdd
-	    item['kkdd_id'] = i.kkdd_id
-	    item['fxbh'] = i.fxbh
-	    item['fxbh_code'] = i.fxbh_code
-	    item['cdbh'] = i.cdbh
-	    item['clsd'] = i.clsd
-            item['hpzl'] = i.hpzl
-	    item['kkbh'] = i.kkbh
-	    item['clbj'] = i.clbj
-	    item['imgurl'] = 'http://%s:8090/' % app.config['FLAG_IP'].get(i.flag, '10.47.223.150')+i.imgpath.replace('\\', '/')
-	    items.append(item)
+	if len(query.all()) == len(query2.all()):
+            for i, j in zip(query.all(), query2.all()):
+	        item = {
+                    'id': i.id,
+                    'cltx_id': i.cltx_id,
+                    'hphm': i.hphm,
+                    'jgsj': i.jgsj.strftime('%Y-%m-%d %H:%M:%S'),
+                    'hpys': i.hpys,
+                    'hpys_id': i.hpys_id,
+                    'hpys_code': i.hpys_code,
+                    'kkdd': i.kkdd,
+                    'kkdd_id': i.kkdd_id,
+                    'fxbh': i.fxbh,
+                    'fxbh_code': i.fxbh_code,
+                    'cdbh': i.cdbh,
+                    'clsd': i.clsd,
+                    'hpzl': i.hpzl,
+                    'kkbh': i.kkbh,
+                    'clbj': i.clbj,
+                    'imgurl': i.imgurl,
+                    'imgpath': i.imgpath,
+		    'date_created': j.date_created.strftime('%Y-%m-%d %H:%M:%S'),
+                    'flag': i.flag
+                }
+	        items.append(item)
+	else:
+            for i in query.all():
+	        item = {
+                    'id': i.id,
+                    'cltx_id': i.cltx_id,
+                    'hphm': i.hphm,
+                    'jgsj': i.jgsj.strftime('%Y-%m-%d %H:%M:%S'),
+                    'hpys': i.hpys,
+                    'hpys_id': i.hpys_id,
+                    'hpys_code': i.hpys_code,
+                    'kkdd': i.kkdd,
+                    'kkdd_id': i.kkdd_id,
+                    'fxbh': i.fxbh,
+                    'fxbh_code': i.fxbh_code,
+                    'cdbh': i.cdbh,
+                    'clsd': i.clsd,
+                    'hpzl': i.hpzl,
+                    'kkbh': i.kkbh,
+                    'clbj': i.clbj,
+                    'imgurl': i.imgurl,
+                    'imgpath': i.imgpath,
+		    'date_created': None,
+                    'flag': i.flag
+                }
+	        items.append(item)
 
 	return jsonify({'items': items, 'total_count': len(items)})
     except Exception as e:
-	logger.error(e)
+	logger.exception(e)
 
 
-@app.route('/final/hy/<int:start_id>/<int:end_id>', methods=['GET'])
-@limiter.limit('500/minute')
-#@limiter.exempt
-#@auth.login_required
-def hy_final_get(start_id, end_id):
-    try:
-	items = []
-        c = db.session.query(FinalHY).filter(FinalHY.id>=start_id, FinalHY.id<=end_id).all()
-        for i in c:
-	    item = {}
-	    item['id'] = i.id
-	    item['cltx_id'] = i.cltx_id
-	    item['hphm'] = i.hphm
-	    item['jgsj'] = str(i.jgsj)
-	    item['hpys'] = i.hpys
-	    item['hpys_id'] = i.hpys_id
-	    item['hpys_code'] = i.hpys_code
-	    item['kkdd'] = i.kkdd
-	    item['kkdd_id'] = i.kkdd_id
-	    item['fxbh'] = i.fxbh
-	    item['fxbh_code'] = i.fxbh_code
-	    item['cdbh'] = i.cdbh
-	    item['clsd'] = i.clsd
-            item['hpzl'] = i.hpzl
-	    item['kkbh'] = i.kkbh
-	    item['clbj'] = i.clbj
-	    item['imgurl'] = 'http://%s:8090/' % app.config['FLAG_IP'].get(i.flag, '10.47.223.152')+i.imgpath.replace('\\', '/')
-	    items.append(item)
-
-	return jsonify({'items': items, 'total_count': len(items)})
-    except Exception as e:
-	logger.error(e)
-
-
-@app.route('/final/hd/<int:start_id>/<int:end_id>', methods=['GET'])
-@limiter.limit('500/minute')
-#@limiter.exempt
-#@auth.login_required
-def hd_final_get(start_id, end_id):
-    try:
-	items = []
-        c = db.session.query(FinalHD).filter(FinalHD.id>=start_id, FinalHD.id<=end_id).all()
-        for i in c:
-	    item = {}
-	    item['id'] = i.id
-	    item['cltx_id'] = i.cltx_id
-	    item['hphm'] = i.hphm
-	    item['jgsj'] = str(i.jgsj)
-	    item['hpys'] = i.hpys
-	    item['hpys_id'] = i.hpys_id
-	    item['hpys_code'] = i.hpys_code
-	    item['kkdd'] = i.kkdd
-	    item['kkdd_id'] = i.kkdd_id
-	    item['fxbh'] = i.fxbh
-	    item['fxbh_code'] = i.fxbh_code
-	    item['cdbh'] = i.cdbh
-	    item['clsd'] = i.clsd
-            item['hpzl'] = i.hpzl
-	    item['kkbh'] = i.kkbh
-	    item['clbj'] = i.clbj
-	    item['imgurl'] = 'http://%s:8090/' % app.config['FLAG_IP'].get(i.flag, '10.47.223.149')+i.imgpath.replace('\\', '/')
-	    items.append(item)
-
-	return jsonify({'items': items, 'total_count': len(items)})
-    except Exception as e:
-	logger.error(e)
-
-
-@app.route('/final/zk/<int:start_id>/<int:end_id>', methods=['GET'])
-@limiter.limit('500/minute')
-#@limiter.exempt
-#@auth.login_required
-def zk_final_get(start_id, end_id):
-    try:
-	items = []
-        c = db.session.query(FinalZK).filter(FinalZK.id>=start_id, FinalZK.id<=end_id).all()
-        for i in c:
-	    item = {}
-	    item['id'] = i.id
-	    item['cltx_id'] = i.cltx_id
-	    item['hphm'] = i.hphm
-	    item['jgsj'] = str(i.jgsj)
-	    item['hpys'] = i.hpys
-	    item['hpys_id'] = i.hpys_id
-	    item['hpys_code'] = i.hpys_code
-	    item['kkdd'] = i.kkdd
-	    item['kkdd_id'] = i.kkdd_id
-	    item['fxbh'] = i.fxbh
-	    item['fxbh_code'] = i.fxbh_code
-	    item['cdbh'] = i.cdbh
-	    item['clsd'] = i.clsd
-            item['hpzl'] = i.hpzl
-	    item['kkbh'] = i.kkbh
-	    item['clbj'] = i.clbj
-	    item['imgurl'] = 'http://%s:8090/' % app.config['FLAG_IP'].get(i.flag, '10.47.223.152')+i.imgpath.replace('\\', '/')
-	    items.append(item)
-
-	return jsonify({'items': items, 'total_count': len(items)})
-    except Exception as e:
-	logger.error(e)
-
-
-@app.route('/final/lm/<int:start_id>/<int:end_id>', methods=['GET'])
-@limiter.limit('500/minute')
-#@limiter.exempt
-#@auth.login_required
-def lm_final_get(start_id, end_id):
-    try:
-	items = []
-        c = db.session.query(FinalLM).filter(FinalLM.id>=start_id, FinalLM.id<=end_id).all()
-        for i in c:
-	    item = {}
-	    item['id'] = i.id
-	    item['cltx_id'] = i.cltx_id
-	    item['hphm'] = i.hphm
-	    item['jgsj'] = str(i.jgsj)
-	    item['hpys'] = i.hpys
-	    item['hpys_id'] = i.hpys_id
-	    item['hpys_code'] = i.hpys_code
-	    item['kkdd'] = i.kkdd
-	    item['kkdd_id'] = i.kkdd_id
-	    item['fxbh'] = i.fxbh
-	    item['fxbh_code'] = i.fxbh_code
-	    item['cdbh'] = i.cdbh
-	    item['clsd'] = i.clsd
-            item['hpzl'] = i.hpzl
-	    item['kkbh'] = i.kkbh
-	    item['clbj'] = i.clbj
-	    item['imgurl'] = 'http://%s:8090/' % app.config['FLAG_IP'].get(i.flag, '10.47.223.149')+i.imgpath.replace('\\', '/')
-	    items.append(item)
-
-	return jsonify({'items': items, 'total_count': len(items)})
-    except Exception as e:
-	logger.error(e)
